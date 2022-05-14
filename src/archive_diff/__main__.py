@@ -2,7 +2,6 @@ import argparse
 import hashlib
 import pathlib as pl
 
-import archive_diff
 from archive_diff.archive_diff import ArchiveDiffer, print_diff
 
 
@@ -32,7 +31,7 @@ def main():
 
     differ = ArchiveDiffer(keep_prefix=args.keep_prefix, hash_algorithm=args.hash_algorithm)
     archive_diff = differ.compute_diff(args.file1, args.file2)
-    print_diff(archive_diff, suppress_common_lines = args.suppress_common)
+    print_diff(archive_diff, suppress_common_lines=args.suppress_common)
 
 
 if __name__ == '__main__':
