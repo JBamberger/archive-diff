@@ -67,206 +67,216 @@ class ArchiveFormatError(Exception):
     pass
 
 
-def md5(io, buffer_size=128 * 1024) -> str:
-    """
-    Computes the md5 hash sum for an input io object.
-    :param io: input io object
-    :param buffer_size: Reading buffer size, by default 128k
-    :return: string with the hex representation of the md5 hash
-    """
-    m = hl.md5()
-    while True:
-        data = io.read(buffer_size)
-        if not data:
-            break
-        m.update(data)
-    return m.hexdigest()
+class ArchiveDiffer:
+    def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
+        self.keep_prefix = keep_prefix
+        self.hash_algorithm = hash_algorithm
+        self.hash_buffer_size = hash_buffer_size
 
+    def compute_file_hash(self, io):
+        """
+        Computes the hash sum for an input io object.
+        :param io: input io object
+        :return: string with the hex representation of the hash
+        """
+        m = hl.new(self.hash_algorithm)
+        while True:
+            data = io.read(self.hash_buffer_size)
+            if not data:
+                break
+            m.update(data)
+        return m.hexdigest()
 
-def compute_listing_zip(in_file: pl.Path) -> Iterator[HashRecord]:
-    """
-    Lists the files and folders in the given zip file and computes hash values for each of the files.
-    :param in_file: Input file
-    :raises ArchiveFormatError: If the input is not a valid zip file.
-    :return: Hashed contents of the archive in no particular order.
-    """
-    if not zipfile.is_zipfile(in_file):
-        raise ArchiveFormatError('Not a zip file.')
+    def compute_hash_listing(self, in_file: pl.Path) -> List[HashRecord]:
+        """
+        Enumerates and hashes the contents of the provided input archive or directory.
 
-    with zipfile.ZipFile(in_file, "r") as archive:
-        for m in archive.infolist():
-            if not m.is_dir():
-                with archive.open(m, 'r') as file:
-                    h = md5(file)
-                yield HashRecord(h, m.filename)
-            else:
-                yield HashRecord(None, m.filename)
+        The function first dispatches to a concrete archive format handler by file extension and tries each handler as a
+        fallback if the extension-based handler failed. If all handlers fail, the method raises a ValueError.
 
+        :param in_file: Input path.
+        :raises ValueError: If the input file type is not supported or accessible.
+        :return: List of hashed content objects.
+        """
 
-def compute_listing_tar(in_file: pl.Path) -> Iterator[HashRecord]:
-    """
-    Lists the files and folders in the given tar file and computes hash values for each of the files. This function
-    supports tar files with gzip, xz, bz2 and without compression.
-    :param in_file: Input file
-    :raises ArchiveFormatError: If the input is not a valid tar file.
-    :return: Hashed contents of the archive in no particular order.
-    """
-    if not tarfile.is_tarfile(in_file):
-        raise ArchiveFormatError('Not a tar file.')
+        def compute_listing_zip(in_file: pl.Path) -> Iterator[HashRecord]:
+            """
+            Lists the files and folders in the given zip file and computes hash values for each of the files.
+            :param in_file: Input file
+            :raises ArchiveFormatError: If the input is not a valid zip file.
+            :return: Hashed contents of the archive in no particular order.
+            """
+            if not zipfile.is_zipfile(in_file):
+                raise ArchiveFormatError('Not a zip file.')
 
-    with tarfile.open(in_file, mode='r', ) as archive:
-        for m in archive.getmembers():
-            if m.isfile():
-                with archive.extractfile(m) as file:
-                    h = md5(file)
-                yield HashRecord(h, m.name)
-            else:
-                yield HashRecord(None, m.name)
+            with zipfile.ZipFile(in_file, "r") as archive:
+                for m in archive.infolist():
+                    if not m.is_dir():
+                        with archive.open(m, 'r') as file:
+                            h = self.compute_file_hash(file)
+                        yield HashRecord(h, m.filename)
+                    else:
+                        yield HashRecord(None, m.filename)
 
+        def compute_listing_tar(in_file: pl.Path) -> Iterator[HashRecord]:
+            """
+            Lists the files and folders in the given tar file and computes hash values for each of the files. This function
+            supports tar files with gzip, xz, bz2 and without compression.
+            :param in_file: Input file
+            :raises ArchiveFormatError: If the input is not a valid tar file.
+            :return: Hashed contents of the archive in no particular order.
+            """
+            if not tarfile.is_tarfile(in_file):
+                raise ArchiveFormatError('Not a tar file.')
 
-def compute_listing_dir(in_file: pl.Path) -> Iterator[HashRecord]:
-    """
-    Lists the files and folders in the given directory and computes hash values for each of the files.
-    :param in_file: Input directory
-    :raises ArchiveFormatError: If the input is not a directory.
-    :return: Hashed contents of the archive in no particular order.
-    """
-    if not in_file.is_dir():
-        raise ArchiveFormatError('File is not a directory.')
+            with tarfile.open(in_file, mode='r', ) as archive:
+                for m in archive.getmembers():
+                    if m.isfile():
+                        with archive.extractfile(m) as file:
+                            h = self.compute_file_hash(file)
+                        yield HashRecord(h, m.name)
+                    else:
+                        yield HashRecord(None, m.name)
 
-    for root, dirs, files in os.walk(in_file):
-        for dir_name in dirs:
-            yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), in_file))
+        def compute_listing_dir(in_file: pl.Path) -> Iterator[HashRecord]:
+            """
+            Lists the files and folders in the given directory and computes hash values for each of the files.
+            :param in_file: Input directory
+            :raises ArchiveFormatError: If the input is not a directory.
+            :return: Hashed contents of the archive in no particular order.
+            """
+            if not in_file.is_dir():
+                raise ArchiveFormatError('File is not a directory.')
 
-        for file_name in files:
-            file_path = os.path.join(root, file_name)
-            with open(file_path, 'rb') as reader:
-                h = md5(reader)
-            yield HashRecord(h, os.path.relpath(file_path, in_file))
+            for root, dirs, files in os.walk(in_file):
+                for dir_name in dirs:
+                    yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), in_file))
 
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    with open(file_path, 'rb') as reader:
+                        h = self.compute_file_hash(reader)
+                    yield HashRecord(h, os.path.relpath(file_path, in_file))
 
-def compute_hash_listing(in_file: pl.Path) -> List[HashRecord]:
-    """
-    Enumerates and hashes the contents of the provided input archive or directory.
+        class FormatHandler(NamedTuple):
+            handle: Callable[[pl.Path], Iterator[HashRecord]]
+            extensions: List[str]
 
-    The function first dispatches to a concrete archive format handler by file extension and tries each handler as a
-    fallback if the extension-based handler failed. If all handlers fail, the method raises a ValueError.
+        # Available archive format handlers
+        format_handlers = [
+            FormatHandler(compute_listing_tar, ['.tar', '.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz']),
+            FormatHandler(compute_listing_zip, ['.zip']),
+        ]
 
-    :param in_file: Input path.
-    :raises ValueError: If the input file type is not supported or accessible.
-    :return: List of hashed content objects.
-    """
+        # Mapping from file extension to format handler
+        extension_map = {ext: h.handle for h in format_handlers for ext in h.extensions}
+        fallback_handlers = [h.handle for h in format_handlers]
 
-    class FormatHandler(NamedTuple):
-        handle: Callable[[pl.Path], Iterator[HashRecord]]
-        extensions: List[str]
+        # Canonical input path with all links and relative parts resolved.
+        in_file = in_file.absolute().resolve(strict=True)
 
-    # Available archive format handlers
-    format_handlers = [
-        FormatHandler(compute_listing_tar, ['.tar', '.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz']),
-        FormatHandler(compute_listing_zip, ['.zip']),
-    ]
+        if in_file.is_dir():
+            return list(compute_listing_dir(in_file))
+        elif in_file.is_file():
+            f = extension_map.get(in_file.suffix, None)
+            handlers = ([f] if f is not None else []) + fallback_handlers
 
-    # Mapping from file extension to format handler
-    extension_map = {ext: h.handle for h in format_handlers for ext in h.extensions}
-    fallback_handlers = [h.handle for h in format_handlers]
+            for handler_function in handlers:
+                try:
+                    return list(handler_function(in_file))
+                except ArchiveFormatError:
+                    # The handler could not deal with the given file format, try the next handler
+                    continue
 
-    # Canonical input path with all links and relative parts resolved.
-    in_file = in_file.absolute().resolve(strict=True)
+        raise ValueError('File path does not point to a valid archive file or directory.')
 
-    if in_file.is_dir():
-        return list(compute_listing_dir(in_file))
-    elif in_file.is_file():
-        f = extension_map.get(in_file.suffix, None)
-        handlers = ([f] if f is not None else []) + fallback_handlers
+    def compute_diff_impl(self, listing1: List[HashRecord], listing2: List[HashRecord]) -> ArchiveDiff:
+        """
+        Computes the difference between two archive content listings.
 
-        for handler_function in handlers:
-            try:
-                return list(handler_function(in_file))
-            except ArchiveFormatError:
-                # The handler could not deal with the given file format, try the next handler
-                continue
+        :param listing1: Listing of the left archive
+        :param listing2: Listing of the right archive
+        :return: Diff descriptor
+        """
 
-    raise ValueError('File path does not point to a valid archive file or directory.')
+        class CanonicalHashRecord(NamedTuple):
+            relpath: str
+            hash: str
 
+        def find_common_prefix(lst: List[HashRecord]) -> List[str]:
 
-def compute_diff(listing1: List[HashRecord], listing2: List[HashRecord]) -> ArchiveDiff:
-    """
-    Computes the difference between two archive content listings.
-
-    :param listing1: Listing of the left archive
-    :param listing2: Listing of the right archive
-    :return: Diff descriptor
-    """
-
-    class CanonicalHashRecord(NamedTuple):
-        relpath: str
-        hash: str
-
-    def find_common_prefix(lst: List[HashRecord]) -> List[str]:
-
-        # Empty and single-item lists have no common prefix
-        if len(lst) < 2:
-            return []
-
-        prefix = lst[0].relpath
-        for record in lst:
-            relpath = record.relpath
-
-            new_prefix = []
-            for a, b in zip(prefix, relpath):
-                if a == b:
-                    new_prefix.append(a)
-                else:
-                    break
-
-            if len(new_prefix) == 0:
+            # Empty and single-item lists have no common prefix
+            if len(lst) < 2:
                 return []
 
-            prefix = new_prefix
+            prefix = lst[0].relpath
+            for record in lst:
+                relpath = record.relpath
 
-        return prefix
+                new_prefix = []
+                for a, b in zip(prefix, relpath):
+                    if a == b:
+                        new_prefix.append(a)
+                    else:
+                        break
 
-    def to_canonical_listing(lst: List[HashRecord]) -> Tuple[List[str], List[CanonicalHashRecord]]:
-        prefix = find_common_prefix(lst)
-        prefix_len = len(prefix)
+                if len(new_prefix) == 0:
+                    return []
 
-        list_no_prefix = [CanonicalHashRecord('/'.join(r.relpath[prefix_len:]), r.hash) for r in lst]
-        list_no_prefix.sort(key=lambda x: x.relpath)
+                prefix = new_prefix
 
-        return prefix, list_no_prefix
+            return prefix
 
-    prefix1, listing1 = to_canonical_listing(listing1)
-    prefix2, listing2 = to_canonical_listing(listing2)
+        def to_canonical_listing(lst: List[HashRecord]) -> Tuple[List[str], List[CanonicalHashRecord]]:
+            if self.keep_prefix:
+                prefix = []
+            else:
+                prefix = find_common_prefix(lst)
 
-    records = []
-    i, j = 0, 0
-    while i < len(listing1) and j < len(listing2):
-        v1 = listing1[i]
-        v2 = listing2[j]
-        if v1.relpath == v2.relpath:
-            records.append(DiffRecord(v1.relpath, DiffState.EQUAL if v1.hash == v2.hash else DiffState.DIFFERENT))
+            prefix_len = len(prefix)
+
+            list_no_prefix = [CanonicalHashRecord('/'.join(r.relpath[prefix_len:]), r.hash) for r in lst]
+            list_no_prefix.sort(key=lambda x: x.relpath)
+
+            return prefix, list_no_prefix
+
+        prefix1, listing1 = to_canonical_listing(listing1)
+        prefix2, listing2 = to_canonical_listing(listing2)
+
+        records = []
+        i, j = 0, 0
+        while i < len(listing1) and j < len(listing2):
+            v1 = listing1[i]
+            v2 = listing2[j]
+            if v1.relpath == v2.relpath:
+                records.append(DiffRecord(v1.relpath, DiffState.EQUAL if v1.hash == v2.hash else DiffState.DIFFERENT))
+                i += 1
+                j += 1
+            elif v1.relpath < v2.relpath:
+                records.append(DiffRecord(v1.relpath, DiffState.ONLY_LEFT))
+                i += 1
+            else:
+                records.append(DiffRecord(v2.relpath, DiffState.ONLY_RIGHT))
+                j += 1
+
+        while i < len(listing1):
+            records.append(DiffRecord(listing1[i].relpath, DiffState.ONLY_LEFT))
             i += 1
-            j += 1
-        elif v1.relpath < v2.relpath:
-            records.append(DiffRecord(v1.relpath, DiffState.ONLY_LEFT))
-            i += 1
-        else:
-            records.append(DiffRecord(v2.relpath, DiffState.ONLY_RIGHT))
+        while j < len(listing2):
+            records.append(DiffRecord(listing2[j].relpath, DiffState.ONLY_RIGHT))
             j += 1
 
-    while i < len(listing1):
-        records.append(DiffRecord(listing1[i].relpath, DiffState.ONLY_LEFT))
-        i += 1
-    while j < len(listing2):
-        records.append(DiffRecord(listing2[j].relpath, DiffState.ONLY_RIGHT))
-        j += 1
+        return ArchiveDiff(
+            '/'.join(prefix1),
+            '/'.join(prefix2),
+            records
+        )
 
-    return ArchiveDiff(
-        '/'.join(prefix1),
-        '/'.join(prefix2),
-        records
-    )
+    def compute_diff(self, left_archive: pl.Path, right_archive: pl.Path) -> ArchiveDiff:
+        listing1 = self.compute_hash_listing(left_archive)
+        listing2 = self.compute_hash_listing(right_archive)
+
+        return self.compute_diff_impl(listing1, listing2)
 
 
 def print_diff(archive_diff: ArchiveDiff) -> None:
@@ -298,4 +308,3 @@ def print_diff(archive_diff: ArchiveDiff) -> None:
         print(record_template.format(record.relpath, result_mapping[record.result]))
 
     print(divider)
-
