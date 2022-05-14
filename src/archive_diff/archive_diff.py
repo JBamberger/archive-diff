@@ -1,4 +1,6 @@
 import argparse
+import math
+from collections import defaultdict
 from enum import Enum, auto
 import hashlib as hl
 import os
@@ -279,7 +281,7 @@ class ArchiveDiffer:
         return self.compute_diff_impl(listing1, listing2)
 
 
-def print_diff(archive_diff: ArchiveDiff) -> None:
+def print_diff(archive_diff: ArchiveDiff, *, suppress_common_lines=False) -> None:
     """
     Prints the diff object as in a human-readable format to the standard output.
 
@@ -295,16 +297,36 @@ def print_diff(archive_diff: ArchiveDiff) -> None:
         print('Prefix 2:', archive_diff.prefix_right)
         print(divider)
 
-    result_mapping = {
+    state_to_name = {
         DiffState.EQUAL: 'Equal',
         DiffState.DIFFERENT: 'Different',
         DiffState.ONLY_LEFT: 'Only left',
         DiffState.ONLY_RIGHT: 'Only right',
     }
+    state_to_symbol = {
+        DiffState.EQUAL: ' ',
+        DiffState.DIFFERENT: '|',  # The actual diff tool uses '/' for the last line of each differing block.
+        DiffState.ONLY_LEFT: '<',
+        DiffState.ONLY_RIGHT: '>',
+    }
     longest_path = max(len(r.relpath) for r in archive_diff.records)
-    record_template = f'{{0:{longest_path}s}} | {{1:s}}'
+    record_template = f'{{rel_path:{longest_path}s}} {{state_sym:s}} {{state_name:s}}'
 
+    counts_per_state = defaultdict(lambda: 0)
     for record in archive_diff.records:
-        print(record_template.format(record.relpath, result_mapping[record.result]))
+        counts_per_state[record.result] += 1
+
+        if (not suppress_common_lines) or (record.result != DiffState.EQUAL):
+            print(record_template.format(
+                rel_path=record.relpath,
+                state_sym=state_to_symbol[record.result],
+                state_name=state_to_name[record.result]))
+
+    print(divider)
+
+    max_count = int(math.ceil(math.log10(max(counts_per_state.values()))))
+    pattern = f'{{state_name:11s}} {{state_count:{max_count:d}d}}'
+    for state in DiffState:
+        print(pattern.format(state_name=state_to_name[state] + ":", state_count=counts_per_state[state]))
 
     print(divider)
