@@ -8,7 +8,7 @@ import pathlib as pl
 import tarfile
 import zipfile
 from dataclasses import dataclass
-from typing import NamedTuple, Iterator, List, Optional, Callable, Union, Tuple
+from typing import NamedTuple, Iterator, List, Optional, Callable, Union, Tuple, Dict
 
 
 @dataclass
@@ -60,6 +60,13 @@ class ArchiveDiff:
     prefix_left: str
     prefix_right: str
     records: List[DiffRecord]
+
+    def stats(self) -> Dict[DiffState, int]:
+        counts = {s: 0 for s in DiffState}
+        for r in self.records:
+            counts[r.result] += 1
+
+        return counts
 
 
 class ArchiveFormatError(Exception):
@@ -164,33 +171,36 @@ class ArchiveDiffer:
             handle: Callable[[pl.Path], Iterator[HashRecord]]
             extensions: List[str]
 
-        # Available archive format handlers
-        format_handlers = [
-            FormatHandler(compute_listing_tar, ['.tar', '.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz']),
-            FormatHandler(compute_listing_zip, ['.zip']),
-        ]
+        def type_independent_listing(archive_path: pl.Path) -> Iterator[HashRecord]:
+            # Available archive format handlers
+            format_handlers = [
+                FormatHandler(compute_listing_tar, ['.tar', '.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz']),
+                FormatHandler(compute_listing_zip, ['.zip']),
+            ]
 
-        # Mapping from file extension to format handler
-        extension_map = {ext: h.handle for h in format_handlers for ext in h.extensions}
-        fallback_handlers = [h.handle for h in format_handlers]
+            # Mapping from file extension to format handler
+            extension_map = {ext: h.handle for h in format_handlers for ext in h.extensions}
+            fallback_handlers = [h.handle for h in format_handlers]
+
+            if archive_path.is_dir():
+                return compute_listing_dir(archive_path)
+            elif archive_path.is_file():
+                f = extension_map.get(archive_path.suffix, None)
+                handlers = ([f] if f is not None else []) + fallback_handlers
+
+                for handler_function in handlers:
+                    try:
+                        return handler_function(archive_path)
+                    except ArchiveFormatError:
+                        # The handler could not deal with the given file format, try the next handler
+                        continue
+
+            raise ValueError('File path does not point to a valid archive file or directory.')
 
         # Canonical input path with all links and relative parts resolved.
         in_file = in_file.absolute().resolve(strict=True)
 
-        if in_file.is_dir():
-            return list(compute_listing_dir(in_file))
-        elif in_file.is_file():
-            f = extension_map.get(in_file.suffix, None)
-            handlers = ([f] if f is not None else []) + fallback_handlers
-
-            for handler_function in handlers:
-                try:
-                    return list(handler_function(in_file))
-                except ArchiveFormatError:
-                    # The handler could not deal with the given file format, try the next handler
-                    continue
-
-        raise ValueError('File path does not point to a valid archive file or directory.')
+        return list(filter(lambda x: x.hash is not None, type_independent_listing(in_file)))
 
     def compute_diff_impl(self, listing1: List[HashRecord], listing2: List[HashRecord]) -> ArchiveDiff:
         """
@@ -237,14 +247,26 @@ class ArchiveDiffer:
 
             prefix_len = len(prefix)
 
-            list_no_prefix = [CanonicalHashRecord('/'.join(r.relpath[prefix_len:]), r.hash) for r in lst]
+            list_no_prefix = []
+            for record in lst:
+                if len(record.relpath) <= prefix_len:
+                    # This filters out the directory entries forming the prefix path.
+                    continue
+
+                canonical_path = '/'.join(record.relpath[prefix_len:])
+                list_no_prefix.append(CanonicalHashRecord(canonical_path, record.hash))
+
             list_no_prefix.sort(key=lambda x: x.relpath)
 
             return prefix, list_no_prefix
 
+        # This sorts the listings by their canonical path.
         prefix1, listing1 = to_canonical_listing(listing1)
         prefix2, listing2 = to_canonical_listing(listing2)
 
+        # Since the listings are sorted by their path we can simply traverse the listings in parallel, always proceeding
+        # with the listing where the next record has the lexicographically smaller path. Where we proceed determines
+        # the diff output for the given record.
         records = []
         i, j = 0, 0
         while i < len(listing1) and j < len(listing2):
@@ -261,6 +283,8 @@ class ArchiveDiffer:
                 records.append(DiffRecord(v2.relpath, DiffState.ONLY_RIGHT))
                 j += 1
 
+        # When the first pass is completed, one of the lists might not have been traversed fully. These loops deal with
+        # the remaining items.
         while i < len(listing1):
             records.append(DiffRecord(listing1[i].relpath, DiffState.ONLY_LEFT))
             i += 1
