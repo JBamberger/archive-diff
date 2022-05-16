@@ -24,7 +24,18 @@ python setup.py install
 python -m pip install .
 ```
 
-### Building and Packaging for Distribution
+### Development and distribution
+
+Development install:
+
+```shell
+python -m pip install -e .
+```
+
+The development install will update automatically with changes in the code base. This is useful for rapid testing
+without rebuilding the package each time.
+
+To build the package for distribution use the following commands:
 
 ```shell
 python -m pip install --upgrade build
