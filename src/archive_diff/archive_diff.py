@@ -1,5 +1,6 @@
 import argparse
 import math
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import Enum, auto
 import hashlib as hl
@@ -69,20 +70,12 @@ class ArchiveDiff:
         return counts
 
 
-class ArchiveFormatError(Exception):
-    """
-    Error class thrown by archive file hashing functions if the input file format is not supported.
-    """
-    pass
-
-
-class ArchiveDiffer:
-    def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
-        self.keep_prefix = keep_prefix
+class FileHasher:
+    def __init__(self, hash_algorithm: str, hash_buffer_size=128 * 1024):
         self.hash_algorithm = hash_algorithm
         self.hash_buffer_size = hash_buffer_size
 
-    def compute_file_hash(self, io):
+    def compute_hash(self, io):
         """
         Computes the hash sum for an input io object.
         :param io: input io object
@@ -96,106 +89,129 @@ class ArchiveDiffer:
             m.update(data)
         return m.hexdigest()
 
+
+class ArchiveFormatError(Exception):
+    """
+    Error class thrown by archive file hashing functions if the input file format is not supported.
+    """
+    pass
+
+
+class ArchiveFormatHandler(ABC):
+
+    def __init__(self, hasher: FileHasher):
+        self._hasher = hasher
+
+    def _compute_file_hash(self, file) -> str:
+        return self._hasher.compute_hash(file)
+
+    @abstractmethod
+    def check_file(self, path: pl.Path) -> bool:
+        """
+        Checks if the given path can be processed by this handler.
+
+        :param path: Input path
+        :return: True, if the path is a valid archive for this handler.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
+        """
+        Lists the files and folders in the given archive and computes hash values for each of the files.
+
+        :param path: Input path
+        :raises ArchiveFormatError: If the input is not supported by this handler.
+        :return: Hashed contents of the archive in no particular order.
+        """
+        raise NotImplementedError()
+
+
+class ZipArchiveHandler(ArchiveFormatHandler):
+
+    def check_file(self, path: pl.Path) -> bool:
+        return path.is_file() and zipfile.is_zipfile(path)
+
+    def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
+
+        if not self.check_file(path):
+            raise ArchiveFormatError('Not a zip file.')
+
+        with zipfile.ZipFile(path, "r") as archive:
+            for m in archive.infolist():
+                if not m.is_dir():
+                    with archive.open(m, 'r') as file:
+                        h = self._compute_file_hash(file)
+                    yield HashRecord(h, m.filename)
+                else:
+                    yield HashRecord(None, m.filename)
+
+
+class TarArchiveHandler(ArchiveFormatHandler):
+
+    def check_file(self, path: pl.Path) -> bool:
+        return path.is_file() and tarfile.is_tarfile(path)
+
+    def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
+        if not self.check_file(path):
+            raise ArchiveFormatError('Not a tar file.')
+
+        with tarfile.open(path, mode='r', ) as archive:
+            for m in archive.getmembers():
+                if m.isfile():
+                    with archive.extractfile(m) as file:
+                        h = self._compute_file_hash(file)
+                    yield HashRecord(h, m.name)
+                else:
+                    yield HashRecord(None, m.name)
+
+
+class DirArchiveHandler(ArchiveFormatHandler):
+
+    def check_file(self, path: pl.Path) -> bool:
+        return path.is_dir()
+
+    def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
+        if not self.check_file(path):
+            raise ArchiveFormatError('File is not a directory.')
+
+        for root, dirs, files in os.walk(path):
+            for dir_name in dirs:
+                yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), path))
+
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                with open(file_path, 'rb') as reader:
+                    h = self._compute_file_hash(reader)
+                yield HashRecord(h, os.path.relpath(file_path, path))
+
+
+class ArchiveDiffer:
+    def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
+        self.keep_prefix = keep_prefix
+        self._file_hasher = FileHasher(hash_algorithm, hash_buffer_size)
+
     def compute_hash_listing(self, in_file: pl.Path) -> List[HashRecord]:
         """
         Enumerates and hashes the contents of the provided input archive or directory.
 
-        The function first dispatches to a concrete archive format handler by file extension and tries each handler as a
-        fallback if the extension-based handler failed. If all handlers fail, the method raises a ValueError.
-
         :param in_file: Input path.
-        :raises ValueError: If the input file type is not supported or accessible.
+        :raises ArchiveFormatError: If the input file type is not supported or accessible.
         :return: List of hashed content objects.
         """
 
-        def compute_listing_zip(in_file: pl.Path) -> Iterator[HashRecord]:
-            """
-            Lists the files and folders in the given zip file and computes hash values for each of the files.
-            :param in_file: Input file
-            :raises ArchiveFormatError: If the input is not a valid zip file.
-            :return: Hashed contents of the archive in no particular order.
-            """
-            if not zipfile.is_zipfile(in_file):
-                raise ArchiveFormatError('Not a zip file.')
-
-            with zipfile.ZipFile(in_file, "r") as archive:
-                for m in archive.infolist():
-                    if not m.is_dir():
-                        with archive.open(m, 'r') as file:
-                            h = self.compute_file_hash(file)
-                        yield HashRecord(h, m.filename)
-                    else:
-                        yield HashRecord(None, m.filename)
-
-        def compute_listing_tar(in_file: pl.Path) -> Iterator[HashRecord]:
-            """
-            Lists the files and folders in the given tar file and computes hash values for each of the files. This function
-            supports tar files with gzip, xz, bz2 and without compression.
-            :param in_file: Input file
-            :raises ArchiveFormatError: If the input is not a valid tar file.
-            :return: Hashed contents of the archive in no particular order.
-            """
-            if not tarfile.is_tarfile(in_file):
-                raise ArchiveFormatError('Not a tar file.')
-
-            with tarfile.open(in_file, mode='r', ) as archive:
-                for m in archive.getmembers():
-                    if m.isfile():
-                        with archive.extractfile(m) as file:
-                            h = self.compute_file_hash(file)
-                        yield HashRecord(h, m.name)
-                    else:
-                        yield HashRecord(None, m.name)
-
-        def compute_listing_dir(in_file: pl.Path) -> Iterator[HashRecord]:
-            """
-            Lists the files and folders in the given directory and computes hash values for each of the files.
-            :param in_file: Input directory
-            :raises ArchiveFormatError: If the input is not a directory.
-            :return: Hashed contents of the archive in no particular order.
-            """
-            if not in_file.is_dir():
-                raise ArchiveFormatError('File is not a directory.')
-
-            for root, dirs, files in os.walk(in_file):
-                for dir_name in dirs:
-                    yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), in_file))
-
-                for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    with open(file_path, 'rb') as reader:
-                        h = self.compute_file_hash(reader)
-                    yield HashRecord(h, os.path.relpath(file_path, in_file))
-
-        class FormatHandler(NamedTuple):
-            handle: Callable[[pl.Path], Iterator[HashRecord]]
-            extensions: List[str]
-
         def type_independent_listing(archive_path: pl.Path) -> Iterator[HashRecord]:
-            # Available archive format handlers
-            format_handlers = [
-                FormatHandler(compute_listing_tar, ['.tar', '.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz']),
-                FormatHandler(compute_listing_zip, ['.zip']),
-            ]
+            for handler in format_handlers:
+                if handler.check_file(archive_path):
+                    return handler.compute_listing(archive_path)
 
-            # Mapping from file extension to format handler
-            extension_map = {ext: h.handle for h in format_handlers for ext in h.extensions}
-            fallback_handlers = [h.handle for h in format_handlers]
+            raise ArchiveFormatError('Could not find handler that supports the given archive type.')
 
-            if archive_path.is_dir():
-                return compute_listing_dir(archive_path)
-            elif archive_path.is_file():
-                f = extension_map.get(archive_path.suffix, None)
-                handlers = ([f] if f is not None else []) + fallback_handlers
-
-                for handler_function in handlers:
-                    try:
-                        return handler_function(archive_path)
-                    except ArchiveFormatError:
-                        # The handler could not deal with the given file format, try the next handler
-                        continue
-
-            raise ValueError('File path does not point to a valid archive file or directory.')
+        format_handlers = [
+            ZipArchiveHandler(self._file_hasher),
+            TarArchiveHandler(self._file_hasher),
+            DirArchiveHandler(self._file_hasher),
+        ]
 
         # Canonical input path with all links and relative parts resolved.
         in_file = in_file.absolute().resolve(strict=True)
