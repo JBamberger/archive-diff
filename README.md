@@ -24,6 +24,18 @@ python setup.py install
 python -m pip install .
 ```
 
+### Supported formats
+
+Out of the box, the tool supports zip, tar and directory archives. For additional archive additional modules need to be
+installed.
+
+| File type | Support                                                 | Notes                           |
+|-----------|---------------------------------------------------------|---------------------------------|
+| directory | -                                                       |                                 |
+| `zip`     | -                                                       |                                 | 
+| `tar`     | supports `gzip`, `bzip2`, `LZMA2/xz` and no compression |                                 |
+| `7z`      | requires `py7zr` package                                | Does not work in streaming mode |
+
 ### Development and distribution
 
 Development install:
@@ -51,7 +63,7 @@ archive-diff left.tar.gz right.zip
 ```
 
 By default, common prefix paths common to all files in the archive are ignored. If such a prefix is found for any of the
-archives, the prefix is displayed. If this is not desired, add the `--keep-prefix` flag.  To print only the differences
+archives, the prefix is displayed. If this is not desired, add the `--keep-prefix` flag. To print only the differences
 between the archives, ignoring the common files, add the `--suppress-common` flag.
 
 To change the content hash function use `--hash-algorithm <algo>`. Available algorithms are printed by

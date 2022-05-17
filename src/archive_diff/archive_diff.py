@@ -133,7 +133,6 @@ class ZipArchiveHandler(ArchiveFormatHandler):
         return path.is_file() and zipfile.is_zipfile(path)
 
     def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
-
         if not self.check_file(path):
             raise ArchiveFormatError('Not a zip file.')
 
@@ -186,10 +185,43 @@ class DirArchiveHandler(ArchiveFormatHandler):
                 yield HashRecord(h, os.path.relpath(file_path, path))
 
 
+try:
+    import py7zr
+
+
+    class SevenZipArchiveHandler(ArchiveFormatHandler):
+
+        def check_file(self, path: pl.Path) -> bool:
+            return path.is_file() and py7zr.is_7zfile(path)
+
+        def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
+            if not self.check_file(path):
+                raise ArchiveFormatError('Not a 7z file.')
+
+            with py7zr.SevenZipFile(path, "r") as archive:
+                for filename, io in archive.readall().items():
+                    print(filename)
+                    h = self._compute_file_hash(io)
+                    yield HashRecord(h, filename)
+
+
+except ImportError:
+    py7zr = None
+
+
 class ArchiveDiffer:
     def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
         self.keep_prefix = keep_prefix
         self._file_hasher = FileHasher(hash_algorithm, hash_buffer_size)
+        self._format_handlers = [
+            ZipArchiveHandler(self._file_hasher),
+            TarArchiveHandler(self._file_hasher),
+            DirArchiveHandler(self._file_hasher),
+        ]
+        if py7zr is not None:
+            self._format_handlers.append(
+                SevenZipArchiveHandler(self._file_hasher)
+            )
 
     def compute_hash_listing(self, in_file: pl.Path) -> List[HashRecord]:
         """
@@ -201,17 +233,11 @@ class ArchiveDiffer:
         """
 
         def type_independent_listing(archive_path: pl.Path) -> Iterator[HashRecord]:
-            for handler in format_handlers:
+            for handler in self._format_handlers:
                 if handler.check_file(archive_path):
                     return handler.compute_listing(archive_path)
 
             raise ArchiveFormatError('Could not find handler that supports the given archive type.')
-
-        format_handlers = [
-            ZipArchiveHandler(self._file_hasher),
-            TarArchiveHandler(self._file_hasher),
-            DirArchiveHandler(self._file_hasher),
-        ]
 
         # Canonical input path with all links and relative parts resolved.
         in_file = in_file.absolute().resolve(strict=True)
