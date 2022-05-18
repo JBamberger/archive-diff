@@ -27,11 +27,17 @@ def main():
     parser.add_argument('--suppress-common',
                         action='store_true',
                         help='Only prints the file paths that differ.')
+    parser.add_argument('--quiet', '-q',
+                        action='store_true',
+                        help='Only print something if the archives differ.')
+    parser.add_argument('--tree',
+                        action='store_true',
+                        help='Print the output as a tree instead of a flat list of files.')
     args = parser.parse_args()
 
     differ = ArchiveDiffer(keep_prefix=args.keep_prefix, hash_algorithm=args.hash_algorithm)
     archive_diff = differ.compute_diff(args.file1, args.file2)
-    print_diff(archive_diff, suppress_common_lines=args.suppress_common)
+    print_diff(archive_diff, suppress_common_lines=args.suppress_common, quiet=args.quiet, tree=args.tree)
 
 
 if __name__ == '__main__':

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import math
 from abc import ABC, abstractmethod
@@ -68,6 +70,90 @@ class ArchiveDiff:
             counts[r.result] += 1
 
         return counts
+
+
+@dataclass
+class DiffTreeNode(ABC):
+    name: str
+
+    @abstractmethod
+    def visit(self, visitor: Callable[[DiffTreeNode], None]):
+        raise NotImplementedError()
+
+
+class DiffTreeDirNode(DiffTreeNode):
+    all_equal: bool
+    children: List[DiffTreeNode]
+
+    def __init__(self, name: str, children: List[DiffTreeNode]):
+        super(DiffTreeDirNode, self).__init__(name)
+
+        def check_equality(node: DiffTreeNode) -> bool:
+            if isinstance(node, DiffTreeFileNode):
+                return node.state == DiffState.EQUAL
+            elif isinstance(node, DiffTreeDirNode):
+                return node.all_equal
+            else:
+                raise ValueError('Node is not a valid DiffTreeNode.')
+
+        self.children = children
+        self.all_equal = all(check_equality(node) for node in self.children)
+
+    def visit(self, visitor: Callable[[DiffTreeNode], None]):
+        visitor(self)
+        for child in self.children:
+            child.visit(visitor)
+
+
+class DiffTreeFileNode(DiffTreeNode):
+    state: DiffState
+    left_hash: Optional[str]
+    right_hash: Optional[str]
+
+    def __init__(self, name: str, state: DiffState):
+        super(DiffTreeFileNode, self).__init__(name)
+        self.state = state
+
+    def visit(self, visitor: Callable[[DiffTreeNode], None]):
+        visitor(self)
+
+
+def build_diff_tree(archive_diff: ArchiveDiff) -> DiffTreeNode:
+    @dataclass
+    class DictNode:
+        files: List[DiffTreeFileNode]
+        dirs: Dict[str: DictNode]
+
+        def __init__(self):
+            self.files = []
+            self.dirs = {}
+
+    def to_tree_node(name: str, node: DictNode) -> DiffTreeDirNode:
+        children = []
+        for k, v in node.dirs.items():
+            children.append(to_tree_node(k, v))
+
+        children += node.files
+
+        return DiffTreeDirNode(name, children)
+
+    archive_root = DictNode()
+    for record in archive_diff.records:
+        parts = record.relpath.split('/')
+
+        d = archive_root
+        while len(parts) > 1:
+            part = parts.pop(0)
+            try:
+                d = archive_root.dirs[part]
+            except KeyError:
+                d = DictNode()
+                archive_root.dirs[part] = d
+
+        file_name = parts[0]
+        d.files.append(DiffTreeFileNode(file_name, state=record.result))
+
+    return to_tree_node('.', archive_root)
 
 
 class FileHasher:
@@ -347,13 +433,37 @@ class ArchiveDiffer:
         return self.compute_diff_impl(listing1, listing2)
 
 
-def print_diff(archive_diff: ArchiveDiff, *, suppress_common_lines=False) -> None:
+def print_diff(archive_diff: ArchiveDiff, *, suppress_common_lines=False, quiet=False, tree=False) -> None:
     """
     Prints the diff object as in a human-readable format to the standard output.
 
     :param archive_diff: diff object
     """
+
+    counts_per_state = defaultdict(lambda: 0)
+    for record in archive_diff.records:
+        counts_per_state[record.result] += 1
+
+    if quiet:
+
+        if (archive_diff.prefix_left != archive_diff.prefix_right) or \
+                (sum(counts_per_state.values()) - counts_per_state[DiffState.EQUAL] > 0):
+            print(f'Different:'
+                  f' prefix={"diff" if archive_diff.prefix_left != archive_diff.prefix_right else "same"}'
+                  f' e={counts_per_state[DiffState.EQUAL]}'
+                  f' d={counts_per_state[DiffState.DIFFERENT]}'
+                  f' ol={counts_per_state[DiffState.ONLY_LEFT]}'
+                  f' or={counts_per_state[DiffState.ONLY_RIGHT]}'
+                  )
+        return
+
     divider = '*' * 80
+    state_to_name = {
+        DiffState.EQUAL: 'Equal',
+        DiffState.DIFFERENT: 'Different',
+        DiffState.ONLY_LEFT: 'Only left',
+        DiffState.ONLY_RIGHT: 'Only right',
+    }
 
     print(divider)
 
@@ -363,30 +473,46 @@ def print_diff(archive_diff: ArchiveDiff, *, suppress_common_lines=False) -> Non
         print('Prefix 2:', archive_diff.prefix_right)
         print(divider)
 
-    state_to_name = {
-        DiffState.EQUAL: 'Equal',
-        DiffState.DIFFERENT: 'Different',
-        DiffState.ONLY_LEFT: 'Only left',
-        DiffState.ONLY_RIGHT: 'Only right',
-    }
-    state_to_symbol = {
-        DiffState.EQUAL: ' ',
-        DiffState.DIFFERENT: '|',  # The actual diff tool uses '/' for the last line of each differing block.
-        DiffState.ONLY_LEFT: '<',
-        DiffState.ONLY_RIGHT: '>',
-    }
-    longest_path = max(len(r.relpath) for r in archive_diff.records)
-    record_template = f'{{rel_path:{longest_path}s}} {{state_sym:s}} {{state_name:s}}'
+    if tree:
+        state_to_symbol = {
+            DiffState.EQUAL: '=',
+            DiffState.DIFFERENT: '#',  # The actual diff tool uses '/' for the last line of each differing block.
+            DiffState.ONLY_LEFT: '<',
+            DiffState.ONLY_RIGHT: '>',
+        }
 
-    counts_per_state = defaultdict(lambda: 0)
-    for record in archive_diff.records:
-        counts_per_state[record.result] += 1
+        def print_tree_node(node: DiffTreeNode, prefix):
+            if isinstance(node, DiffTreeDirNode):
+                if not (suppress_common_lines and node.all_equal):
+                    print(prefix + f'{"=" if node.all_equal else "#":s} {node.name:s}')
+                    for c in node.children:
+                        print_tree_node(c, prefix + '|   ')
+            elif isinstance(node, DiffTreeFileNode):
+                if not (suppress_common_lines and node.state == DiffState.EQUAL):
+                    print(prefix + f'{state_to_symbol[node.state]:s} {node.name:s}')
+            else:
+                raise ValueError('Invalid node type ' + str(type(node)))
 
-        if (not suppress_common_lines) or (record.result != DiffState.EQUAL):
-            print(record_template.format(
-                rel_path=record.relpath,
-                state_sym=state_to_symbol[record.result],
-                state_name=state_to_name[record.result]))
+        tree = build_diff_tree(archive_diff)
+        print_tree_node(tree, '')
+    else:
+
+        state_to_symbol = {
+            DiffState.EQUAL: ' ',
+            DiffState.DIFFERENT: '|',  # The actual diff tool uses '/' for the last line of each differing block.
+            DiffState.ONLY_LEFT: '<',
+            DiffState.ONLY_RIGHT: '>',
+        }
+
+        longest_path = max(len(r.relpath) for r in archive_diff.records)
+        record_template = f'{{rel_path:{longest_path}s}} {{state_sym:s}} {{state_name:s}}'
+
+        for record in archive_diff.records:
+            if not (suppress_common_lines and record.result == DiffState.EQUAL):
+                print(record_template.format(
+                    rel_path=record.relpath,
+                    state_sym=state_to_symbol[record.result],
+                    state_name=state_to_name[record.result]))
 
     print(divider)
 
