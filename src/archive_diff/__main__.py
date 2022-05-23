@@ -36,7 +36,12 @@ def main():
     args = parser.parse_args()
 
     differ = ArchiveDiffer(keep_prefix=args.keep_prefix, hash_algorithm=args.hash_algorithm)
-    archive_diff = differ.compute_diff(args.file1, args.file2)
+    try:
+        archive_diff = differ.compute_diff(args.file1, args.file2)
+    except FileNotFoundError as e:
+        print(f'File not found: {e.filename}')
+        return
+
     print_diff(archive_diff, suppress_common_lines=args.suppress_common, quiet=args.quiet, tree=args.tree)
 
 
