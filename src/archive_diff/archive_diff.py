@@ -260,15 +260,19 @@ class DirArchiveHandler(ArchiveFormatHandler):
         if not self.check_file(path):
             raise ArchiveFormatError('File is not a directory.')
 
+        # The parent dir is always defined. If we are in the actual file system root, e.g. '/', 'D:\'..., calling parent
+        # returns the file system root again.
+        archive_root = path.parent
+
         for root, dirs, files in os.walk(path):
             for dir_name in dirs:
-                yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), path))
+                yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), archive_root))
 
             for file_name in files:
                 file_path = os.path.join(root, file_name)
                 with open(file_path, 'rb') as reader:
                     h = self._compute_file_hash(reader)
-                yield HashRecord(h, os.path.relpath(file_path, path))
+                yield HashRecord(h, os.path.relpath(file_path, archive_root))
 
 
 try:
