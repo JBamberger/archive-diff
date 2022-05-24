@@ -14,28 +14,6 @@ from dataclasses import dataclass
 from typing import NamedTuple, Iterator, List, Optional, Callable, Union, Tuple, Dict
 
 
-@dataclass
-class HashRecord:
-    hash: Optional[str]
-    relpath: List[str]
-
-    def __init__(self, hash, relpath: Union[str, List[str]]) -> None:
-        self.hash = hash.lower() if hash is not None else None
-
-        if isinstance(relpath, str):
-            self.relpath = []
-            rest = relpath
-            while True:
-                rest, part = os.path.split(rest)
-                if part:
-                    self.relpath.append(part)
-                if not rest:
-                    break
-            self.relpath.reverse()
-        else:
-            self.relpath = list(relpath)
-
-
 class DiffState(Enum):
     """
     Enumeration that describes possible difference states for a single file path in the archive.
@@ -177,6 +155,41 @@ class FileHasher:
         return m.hexdigest()
 
 
+def path_parts(path: str) -> List[str]:
+    # Replace with pl.Path.parts
+    parts = []
+    while True:
+        rest, part = os.path.split(path)
+        if part:
+            parts.append(part)
+
+        if path == rest:
+            break
+        path = rest
+
+    parts.reverse()
+
+    return parts
+
+
+@dataclass
+class HashRecord:
+    hash: Optional[str]
+
+    def __init__(self, hash, relpath: Union[str, List[str]]) -> None:
+        self.hash = hash.lower() if hash is not None else None
+        self._path_parts = path_parts(relpath) if isinstance(relpath, str) else list(relpath)
+        self._relpath = '/'.join(self._path_parts)
+
+    @property
+    def path_parts(self) -> List[str]:
+        return self._path_parts
+
+    @property
+    def relpath(self) -> str:
+        return self._relpath
+
+
 class ArchiveFormatError(Exception):
     """
     Error class thrown by archive file hashing functions if the input file format is not supported.
@@ -304,6 +317,40 @@ except ImportError:
     py7zr = None
 
 
+def compute_listing_diff(listing1: List[HashRecord], listing2: List[HashRecord]):
+    listing1.sort(key=lambda x: x.path_parts)
+    listing2.sort(key=lambda x: x.path_parts)
+
+    # Since the listings are sorted by their path we can simply traverse the listings in parallel, always proceeding
+    # with the listing where the next record has the lexicographically smaller path. Where we proceed determines
+    # the diff output for the given record.
+    records = []
+    i, j = 0, 0
+    while i < len(listing1) and j < len(listing2):
+        v1 = listing1[i]
+        v2 = listing2[j]
+        if v1.relpath == v2.relpath:
+            records.append(DiffRecord(v1.relpath, DiffState.EQUAL if v1.hash == v2.hash else DiffState.DIFFERENT))
+            i += 1
+            j += 1
+        elif v1.relpath < v2.relpath:
+            records.append(DiffRecord(v1.relpath, DiffState.ONLY_LEFT))
+            i += 1
+        else:
+            records.append(DiffRecord(v2.relpath, DiffState.ONLY_RIGHT))
+            j += 1
+    # When the first pass is completed, one of the lists might not have been traversed fully. These loops deal with
+    # the remaining items.
+    while i < len(listing1):
+        records.append(DiffRecord(listing1[i].relpath, DiffState.ONLY_LEFT))
+        i += 1
+    while j < len(listing2):
+        records.append(DiffRecord(listing2[j].relpath, DiffState.ONLY_RIGHT))
+        j += 1
+
+    return records
+
+
 class ArchiveDiffer:
     def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
         self.keep_prefix = keep_prefix
@@ -348,22 +395,15 @@ class ArchiveDiffer:
         :return: Diff descriptor
         """
 
-        class CanonicalHashRecord(NamedTuple):
-            relpath: str
-            hash: str
-
         def find_common_prefix(lst: List[HashRecord]) -> List[str]:
-
             # Empty and single-item lists have no common prefix
             if len(lst) < 2:
                 return []
 
-            prefix = lst[0].relpath
+            prefix = lst[0].path_parts
             for record in lst:
-                relpath = record.relpath
-
                 new_prefix = []
-                for a, b in zip(prefix, relpath):
+                for a, b in zip(prefix, record.path_parts):
                     if a == b:
                         new_prefix.append(a)
                     else:
@@ -376,58 +416,29 @@ class ArchiveDiffer:
 
             return prefix
 
-        def to_canonical_listing(lst: List[HashRecord]) -> Tuple[List[str], List[CanonicalHashRecord]]:
-            if self.keep_prefix:
-                prefix = []
-            else:
-                prefix = find_common_prefix(lst)
+        def strip_prefix_from_records(lst: List[HashRecord]) -> Tuple[List[str], List[HashRecord]]:
+            prefix = find_common_prefix(lst)
 
             prefix_len = len(prefix)
-
             list_no_prefix = []
             for record in lst:
-                if len(record.relpath) <= prefix_len:
+                if len(record.path_parts) <= prefix_len:
                     # This filters out the directory entries forming the prefix path.
                     continue
 
-                canonical_path = '/'.join(record.relpath[prefix_len:])
-                list_no_prefix.append(CanonicalHashRecord(canonical_path, record.hash))
-
-            list_no_prefix.sort(key=lambda x: x.relpath)
+                list_no_prefix.append(HashRecord(record.hash, record.path_parts[prefix_len:]))
 
             return prefix, list_no_prefix
 
-        # This sorts the listings by their canonical path.
-        prefix1, listing1 = to_canonical_listing(listing1)
-        prefix2, listing2 = to_canonical_listing(listing2)
+        if not self.keep_prefix:
+            # This sorts the listings by their canonical path.
+            prefix1, listing1 = strip_prefix_from_records(listing1)
+            prefix2, listing2 = strip_prefix_from_records(listing2)
+        else:
+            prefix1 = []
+            prefix2 = []
 
-        # Since the listings are sorted by their path we can simply traverse the listings in parallel, always proceeding
-        # with the listing where the next record has the lexicographically smaller path. Where we proceed determines
-        # the diff output for the given record.
-        records = []
-        i, j = 0, 0
-        while i < len(listing1) and j < len(listing2):
-            v1 = listing1[i]
-            v2 = listing2[j]
-            if v1.relpath == v2.relpath:
-                records.append(DiffRecord(v1.relpath, DiffState.EQUAL if v1.hash == v2.hash else DiffState.DIFFERENT))
-                i += 1
-                j += 1
-            elif v1.relpath < v2.relpath:
-                records.append(DiffRecord(v1.relpath, DiffState.ONLY_LEFT))
-                i += 1
-            else:
-                records.append(DiffRecord(v2.relpath, DiffState.ONLY_RIGHT))
-                j += 1
-
-        # When the first pass is completed, one of the lists might not have been traversed fully. These loops deal with
-        # the remaining items.
-        while i < len(listing1):
-            records.append(DiffRecord(listing1[i].relpath, DiffState.ONLY_LEFT))
-            i += 1
-        while j < len(listing2):
-            records.append(DiffRecord(listing2[j].relpath, DiffState.ONLY_RIGHT))
-            j += 1
+        records = compute_listing_diff(listing1, listing2)
 
         return ArchiveDiff(
             '/'.join(prefix1),

@@ -1,15 +1,12 @@
 from unittest import TestCase
 
 from archive_diff.archive_diff import DirArchiveHandler, FileHasher, HashRecord, ZipArchiveHandler, TarArchiveHandler, \
-    SevenZipArchiveHandler
+    SevenZipArchiveHandler, path_parts, compute_listing_diff, DiffRecord, DiffState
 import pathlib as pl
 
 
-class Test(TestCase):
+class TestArchiveHandler(TestCase):
     test_file_root = pl.Path(__file__).parent / 'test_files'
-
-    # def test_build_diff_tree(self):
-    #     self.fail()
 
     def exercise_ArchiveHandler(self, handler, path):
         expected_result = [
@@ -21,7 +18,7 @@ class Test(TestCase):
         self.assertTrue(handler.check_file(path))
 
         listing = sorted(handler.compute_listing(path), key=lambda x: x.relpath)
-        self.assertEqual(listing, expected_result)
+        self.assertEqual(expected_result, listing)
 
     def test_dir_handler(self):
         self.exercise_ArchiveHandler(
@@ -78,17 +75,118 @@ class Test(TestCase):
         )
 
 
-"""
-MD5             2FD9829A9EB52F9F631AEAD603380E55                                       test_left/different.txt
-MD5             AB01D8557C269BF2086F6D341061E994                                       test_left/only_left.txt
-MD5             87EED8A89A67FC20C740C125F2AF7D82                                       test_left/same.txt
-MD5             E82A5E70EBACADF263F41FEF36ED12C2                                       test_right/different.txt
-MD5             E72277F92E25A87704150596DB2EF54D                                       test_right/only_right.txt
-MD5             87EED8A89A67FC20C740C125F2AF7D82                                       test_right/same.txt
-SHA256          FC84AC773B477963FCD273B8C8E105075EEBEE6CB585456A4B8EA8876C6C3203       test_left/different.txt
-SHA256          E32D2C0C6417505595A1C65272DAB8373359135753D76211B90C10E51B6ED312       test_left/only_left.txt
-SHA256          9457D486692E7112CCB88EFB62F7680CB0DF8F2B94961CE402EF1ED7C6AA45A8       test_left/same.txt
-SHA256          17B08F5E93DC975DA1077F18EB1474111665E1519E6C05B7290D71BF448FFE3D       test_right/different.txt
-SHA256          30DCBF1D34D128226633DD2529CA84CC79CB3AFF16E24323718632FE2E3C01FA       test_right/only_right.txt
-SHA256          9457D486692E7112CCB88EFB62F7680CB0DF8F2B94961CE402EF1ED7C6AA45A8       test_right/same.txt
-"""
+class TestDiffAlgorithm(TestCase):
+    # def test_build_diff_tree(self):
+    #     self.fail()
+
+    def test_compute_listing_diff_simple(self):
+        left = [
+            HashRecord('hash_left', 'root/only_left'),
+            HashRecord('hash_left', 'root/different'),
+            HashRecord('hash_same', 'root/same'),
+        ]
+        right = [
+            HashRecord('hash_right', 'root/only_right'),
+            HashRecord('hash_right', 'root/different'),
+            HashRecord('hash_same', 'root/same'),
+        ]
+        expected_result = [
+            DiffRecord('root/different', DiffState.DIFFERENT),
+            DiffRecord('root/only_left', DiffState.ONLY_LEFT),
+            DiffRecord('root/only_right', DiffState.ONLY_RIGHT),
+            DiffRecord('root/same', DiffState.EQUAL),
+        ]
+
+        self.assertEqual(expected_result, compute_listing_diff(left, right))
+
+    def test_compute_listing_diff_simple_unordered(self):
+        left = [
+            HashRecord('hash_same', 'root/same'),
+            HashRecord('hash_left', 'root/different'),
+            HashRecord('hash_left', 'root/only_left'),
+        ]
+        right = [
+            HashRecord('hash_right', 'root/only_right'),
+            HashRecord('hash_same', 'root/same'),
+            HashRecord('hash_right', 'root/different'),
+        ]
+        expected_result = [
+            DiffRecord('root/different', DiffState.DIFFERENT),
+            DiffRecord('root/only_left', DiffState.ONLY_LEFT),
+            DiffRecord('root/only_right', DiffState.ONLY_RIGHT),
+            DiffRecord('root/same', DiffState.EQUAL),
+        ]
+
+        self.assertEqual(expected_result, compute_listing_diff(left, right))
+
+    def test_compute_listing_diff_multi_root(self):
+        left = [
+            HashRecord('hash_left', 'only_left'),
+            HashRecord('hash_left', 'different'),
+            HashRecord('hash_same', 'same'),
+        ]
+        right = [
+            HashRecord('hash_right', 'only_right'),
+            HashRecord('hash_right', 'different'),
+            HashRecord('hash_same', 'same'),
+        ]
+        expected_result = [
+            DiffRecord('different', DiffState.DIFFERENT),
+            DiffRecord('only_left', DiffState.ONLY_LEFT),
+            DiffRecord('only_right', DiffState.ONLY_RIGHT),
+            DiffRecord('same', DiffState.EQUAL),
+        ]
+
+        self.assertEqual(expected_result, compute_listing_diff(left, right))
+
+    def test_compute_listing_diff_with_dirs(self):
+        left = [
+            HashRecord(None, 'root'),
+            HashRecord('hash_left', 'root/only_left'),
+            HashRecord('hash_left', 'root/different'),
+            HashRecord('hash_same', 'root/same'),
+        ]
+        right = [
+            HashRecord(None, 'root'),
+            HashRecord('hash_right', 'root/only_right'),
+            HashRecord('hash_right', 'root/different'),
+            HashRecord('hash_same', 'root/same'),
+        ]
+        expected_result = [
+            DiffRecord('root', DiffState.EQUAL),
+            DiffRecord('root/different', DiffState.DIFFERENT),
+            DiffRecord('root/only_left', DiffState.ONLY_LEFT),
+            DiffRecord('root/only_right', DiffState.ONLY_RIGHT),
+            DiffRecord('root/same', DiffState.EQUAL),
+        ]
+
+        self.assertEqual(expected_result, compute_listing_diff(left, right))
+
+    def test_compute_listing_diff_dir_to_file(self):
+        left = [HashRecord(None, 'root')]
+        right = [HashRecord('hash_file', 'root')]
+        expected_result = [DiffRecord('root', DiffState.DIFFERENT)]
+
+        self.assertEqual(expected_result, compute_listing_diff(left, right))
+
+
+class TestUtilityFunctions(TestCase):
+
+    def test_path_parts(self):
+        # Unix-style
+        self.assertEqual([], path_parts('/'))
+        self.assertEqual(['hello'], path_parts('/hello'))
+        self.assertEqual(['hello', 'world'], path_parts('/hello/world'))
+        self.assertEqual(['hello', 'world'], path_parts('/hello/world/'))
+
+        # Windows-style
+        self.assertEqual([], path_parts('C:\\'))
+        self.assertEqual(['hello'], path_parts('C:\\hello'))
+        self.assertEqual(['hello', 'world'], path_parts('C:\\hello\\world'))
+        self.assertEqual(['hello', 'world'], path_parts('C:\\hello\\world\\'))
+
+        # Mixed / and \
+        self.assertEqual(['hello', 'world'], path_parts('C:\\hello\\world/'))
+
+        # How should we handle network paths?
+        # self.assertEqual(['192.168.0.1', 'world'], path_parts('\\\\192.168.0.1\\world\\'))
