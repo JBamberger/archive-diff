@@ -20,14 +20,15 @@ class HashRecord:
     relpath: List[str]
 
     def __init__(self, hash, relpath: Union[str, List[str]]) -> None:
-        self.hash = hash
+        self.hash = hash.lower() if hash is not None else None
 
         if isinstance(relpath, str):
             self.relpath = []
             rest = relpath
             while True:
                 rest, part = os.path.split(rest)
-                self.relpath.append(part)
+                if part:
+                    self.relpath.append(part)
                 if not rest:
                     break
             self.relpath.reverse()
@@ -264,6 +265,8 @@ class DirArchiveHandler(ArchiveFormatHandler):
         # returns the file system root again.
         archive_root = path.parent
 
+        yield HashRecord(None, os.path.relpath(path, archive_root))
+
         for root, dirs, files in os.walk(path):
             for dir_name in dirs:
                 yield HashRecord(None, os.path.relpath(os.path.join(root, dir_name), archive_root))
@@ -289,12 +292,14 @@ try:
                 raise ArchiveFormatError('Not a 7z file.')
 
             with py7zr.SevenZipFile(path, "r") as archive:
-                for filename, io in archive.readall().items():
-                    print(filename)
-                    h = self._compute_file_hash(io)
-                    yield HashRecord(h, filename)
+                file_contents = archive.readall()
 
-
+                for fi in archive.list():
+                    if fi.is_directory:
+                        yield HashRecord(None, fi.filename)
+                    else:
+                        h = self._compute_file_hash(file_contents[fi.filename])
+                        yield HashRecord(h, fi.filename)
 except ImportError:
     py7zr = None
 
