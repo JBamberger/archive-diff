@@ -351,6 +351,43 @@ def compute_listing_diff(listing1: List[HashRecord], listing2: List[HashRecord])
     return records
 
 
+def find_common_prefix(lst: List[HashRecord]) -> List[str]:
+    # Empty and single-item lists have no common prefix
+    if len(lst) < 2:
+        return []
+
+    prefix = lst[0].path_parts
+    for record in lst:
+        new_prefix = []
+        for a, b in zip(prefix, record.path_parts):
+            if a == b:
+                new_prefix.append(a)
+            else:
+                break
+
+        if len(new_prefix) == 0:
+            return []
+
+        prefix = new_prefix
+
+    return prefix
+
+
+def strip_prefix_from_records(lst: List[HashRecord]) -> Tuple[List[str], List[HashRecord]]:
+    prefix = find_common_prefix(lst)
+
+    prefix_len = len(prefix)
+    list_no_prefix = []
+    for record in lst:
+        if len(record.path_parts) <= prefix_len:
+            # This filters out the directory entries forming the prefix path.
+            continue
+
+        list_no_prefix.append(HashRecord(record.hash, record.path_parts[prefix_len:]))
+
+    return prefix, list_no_prefix
+
+
 class ArchiveDiffer:
     def __init__(self, keep_prefix: bool, hash_algorithm: str, hash_buffer_size=128 * 1024):
         self.keep_prefix = keep_prefix
@@ -394,41 +431,6 @@ class ArchiveDiffer:
         :param listing2: Listing of the right archive
         :return: Diff descriptor
         """
-
-        def find_common_prefix(lst: List[HashRecord]) -> List[str]:
-            # Empty and single-item lists have no common prefix
-            if len(lst) < 2:
-                return []
-
-            prefix = lst[0].path_parts
-            for record in lst:
-                new_prefix = []
-                for a, b in zip(prefix, record.path_parts):
-                    if a == b:
-                        new_prefix.append(a)
-                    else:
-                        break
-
-                if len(new_prefix) == 0:
-                    return []
-
-                prefix = new_prefix
-
-            return prefix
-
-        def strip_prefix_from_records(lst: List[HashRecord]) -> Tuple[List[str], List[HashRecord]]:
-            prefix = find_common_prefix(lst)
-
-            prefix_len = len(prefix)
-            list_no_prefix = []
-            for record in lst:
-                if len(record.path_parts) <= prefix_len:
-                    # This filters out the directory entries forming the prefix path.
-                    continue
-
-                list_no_prefix.append(HashRecord(record.hash, record.path_parts[prefix_len:]))
-
-            return prefix, list_no_prefix
 
         if not self.keep_prefix:
             # This sorts the listings by their canonical path.

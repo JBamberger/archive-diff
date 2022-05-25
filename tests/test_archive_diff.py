@@ -1,7 +1,8 @@
 from unittest import TestCase
 
 from archive_diff.archive_diff import DirArchiveHandler, FileHasher, HashRecord, ZipArchiveHandler, TarArchiveHandler, \
-    SevenZipArchiveHandler, path_parts, compute_listing_diff, DiffRecord, DiffState
+    SevenZipArchiveHandler, path_parts, compute_listing_diff, DiffRecord, DiffState, find_common_prefix, \
+    strip_prefix_from_records
 import pathlib as pl
 
 
@@ -171,6 +172,59 @@ class TestDiffAlgorithm(TestCase):
 
 
 class TestUtilityFunctions(TestCase):
+
+    def test_find_common_prefix(self):
+        listing = [HashRecord(None, path) for path in [
+            'root/hello',
+            'root/foo',
+            'root/hello/world',
+        ]]
+        expected_prefix = ['root']
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_find_common_prefix_with_dir(self):
+        listing = [HashRecord(None, path) for path in [
+            'root',
+            'root/hello',
+            'root/foo',
+            'root/hello/world',
+        ]]
+        expected_prefix = ['root']
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_find_common_prefix_no_common(self):
+        listing = [HashRecord(None, path) for path in [
+            'hello',
+            'hello/world',
+            'root/foo',
+            'root/bar',
+        ]]
+        expected_prefix = []
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_strip_prefix_from_records(self):
+        listing = [
+            HashRecord(None, 'root'),
+            HashRecord(None, 'root/hello'),
+            HashRecord('hash_2', 'root/hello/world'),
+            HashRecord('hash_3', 'root/foo'),
+            HashRecord('hash_4', 'root/bar'),
+        ]
+        expected_prefix = ['root']
+        expected_listing = [
+            HashRecord(None, 'hello'),
+            HashRecord('hash_2', 'hello/world'),
+            HashRecord('hash_3', 'foo'),
+            HashRecord('hash_4', 'bar'),
+        ]
+
+        result_prefix, result_listing = strip_prefix_from_records(listing)
+
+        self.assertEqual(expected_prefix, result_prefix)
+        self.assertEqual(expected_listing, result_listing)
 
     def test_path_parts(self):
         # Unix-style
