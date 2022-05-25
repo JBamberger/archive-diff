@@ -174,34 +174,69 @@ class TestDiffAlgorithm(TestCase):
 class TestUtilityFunctions(TestCase):
 
     def test_find_common_prefix(self):
-        listing = [HashRecord(None, path) for path in [
-            'root/hello',
-            'root/foo',
-            'root/hello/world',
-        ]]
+        listing = [
+            HashRecord(None, 'root/hello'),
+            HashRecord('hash', 'root/foo'),
+            HashRecord('hash', 'root/hello/world'),
+        ]
         expected_prefix = ['root']
 
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_with_dir(self):
-        listing = [HashRecord(None, path) for path in [
-            'root',
-            'root/hello',
-            'root/foo',
-            'root/hello/world',
-        ]]
+        listing = [
+            HashRecord(None, 'root'),
+            HashRecord(None, 'root/hello'),
+            HashRecord('hash', 'root/foo'),
+            HashRecord('hash', 'root/hello/world'),
+        ]
         expected_prefix = ['root']
 
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_no_common(self):
-        listing = [HashRecord(None, path) for path in [
-            'hello',
-            'hello/world',
-            'root/foo',
-            'root/bar',
-        ]]
+        listing = [
+            HashRecord(None, 'hello'),
+            HashRecord('hash', 'hello/world'),
+            HashRecord('hash', 'root/foo'),
+            HashRecord('hash', 'root/bar'),
+        ]
         expected_prefix = []
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_find_common_prefix_with_dirs(self):
+        listing = [
+            HashRecord(None, 'root'),
+            HashRecord(None, 'root/hello'),
+            HashRecord('hash', 'root/hello/world'),
+            HashRecord('hash', 'root/hello/foo'),
+            HashRecord('hash', 'root/hello/bar'),
+        ]
+        expected_prefix = ['root', 'hello']
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_find_common_prefix_only_dirs(self):
+        listing = [
+            HashRecord(None, 'root'),
+            HashRecord(None, 'root/hello'),
+            HashRecord(None, 'root/hello/foo'),
+            HashRecord(None, 'root/hello/bar'),
+        ]
+        expected_prefix = ['root', 'hello']
+
+        self.assertEqual(expected_prefix, find_common_prefix(listing))
+
+    def test_find_common_prefix_mixed(self):
+        listing = [
+            HashRecord(None, 'root'),
+            HashRecord(None, 'root/hello'),
+            HashRecord(None, 'root/world'),
+            HashRecord('hash', 'root/hello/foo'),
+            HashRecord('hash', 'root/hello/bar'),
+        ]
+        expected_prefix = ['root']
 
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 

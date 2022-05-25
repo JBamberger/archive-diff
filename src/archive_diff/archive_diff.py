@@ -352,23 +352,61 @@ def compute_listing_diff(listing1: List[HashRecord], listing2: List[HashRecord])
 
 
 def find_common_prefix(lst: List[HashRecord]) -> List[str]:
-    # Empty and single-item lists have no common prefix
-    if len(lst) < 2:
-        return []
-
-    prefix = lst[0].path_parts
+    root = {}
     for record in lst:
-        new_prefix = []
-        for a, b in zip(prefix, record.path_parts):
-            if a == b:
-                new_prefix.append(a)
+        parts = record.path_parts if record.hash is None else record.path_parts[:-1]
+
+        tree = root
+        for part in parts:
+            if part not in tree:
+                tree[part] = {}
+            tree = tree[part]
+
+        if record.hash is not None:
+            try:
+                tree[record.path_parts[-1]] = '__file__'
+            except TypeError:
+                raise ValueError(f'The record structure is not valid. '
+                                 f'The same path is reused multiple times: {"/".join(record.path_parts[:-1])}')
+
+    prefix = []
+    tree = root
+    while True:
+        keys = tree.keys()
+        if len(keys) == 1:
+            key = next(iter(keys))
+            val = tree[key]
+            if isinstance(val, dict):
+                prefix.append(key)
+                tree = val
             else:
                 break
+        else:
+            break
 
-        if len(new_prefix) == 0:
-            return []
-
-        prefix = new_prefix
+    # initial = next(filter(lambda r: r.hash is not None, lst), None)
+    #
+    # if initial is None:
+    #     # empty list or only dirs
+    #     return []
+    #
+    # prefix = initial.path_parts[:-1]
+    #
+    # for record in lst:
+    #     if record.hash is None:
+    #         continue
+    #
+    #     new_prefix = []
+    #     for a, b in zip(prefix, record.path_parts):
+    #         if a == b:
+    #             new_prefix.append(a)
+    #         else:
+    #             break
+    #
+    #     if len(new_prefix) == 0:
+    #         return []
+    #
+    #     prefix = new_prefix
 
     return prefix
 
