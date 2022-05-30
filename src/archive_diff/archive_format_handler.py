@@ -1,3 +1,6 @@
+"""
+Implementations of handlers (listing and hashing of contents) for various archive formats.
+"""
 from __future__ import annotations
 
 import os
@@ -14,19 +17,33 @@ from archive_diff.utils import path_parts
 
 @dataclass
 class HashRecord:
+    """
+    Data class representing a file or directory with associated hash value. For directories the hash
+    is None.
+    """
     hash: Optional[str]
 
-    def __init__(self, hash, relpath: Union[str, List[str]]) -> None:
-        self.hash = hash.lower() if hash is not None else None
+    def __init__(self, hash_value, relpath: Union[str, List[str]]) -> None:
+        """
+        :param hash_value: File hash, None for directories
+        :param relpath: Path string or list of path segments identifying this object.
+        """
+        self.hash = hash_value.lower() if hash_value is not None else None
         self._path_parts = path_parts(relpath) if isinstance(relpath, str) else list(relpath)
         self._relpath = '/'.join(self._path_parts)
 
     @property
     def path_parts(self) -> List[str]:
+        """
+        :return: List of path segments identifying this object.
+        """
         return self._path_parts
 
     @property
     def relpath(self) -> str:
+        """
+        :return: Canonical path identifying this object.
+        """
         return self._relpath
 
 
@@ -34,15 +51,25 @@ class ArchiveFormatError(Exception):
     """
     Error class thrown by archive file hashing functions if the input file format is not supported.
     """
-    pass
 
 
 class ArchiveFormatHandler(ABC):
+    """
+    Base class for all archive handlers.
+    """
 
     def __init__(self, hasher: FileHasher):
+        """
+        :param hasher: File hasher used to compute the hashes identifying file differences.
+        """
         self._hasher = hasher
 
     def _compute_file_hash(self, file) -> str:
+        """
+        Helper to compute the hash of a file.
+        :param file: Input file IO object.
+        :return: Hash of the file
+        """
         return self._hasher.compute_hash(file)
 
     @abstractmethod
@@ -58,7 +85,8 @@ class ArchiveFormatHandler(ABC):
     @abstractmethod
     def compute_listing(self, path: pl.Path) -> Iterator[HashRecord]:
         """
-        Lists the files and folders in the given archive and computes hash values for each of the files.
+        Lists the files and folders in the given archive and computes hash values for each of the
+        files.
 
         :param path: Input path
         :raises ArchiveFormatError: If the input is not supported by this handler.
@@ -68,6 +96,9 @@ class ArchiveFormatHandler(ABC):
 
 
 class ZipArchiveHandler(ArchiveFormatHandler):
+    """
+    Handler for zip-based archives.
+    """
 
     def check_file(self, path: pl.Path) -> bool:
         return path.is_file() and zipfile.is_zipfile(path)
@@ -77,16 +108,19 @@ class ZipArchiveHandler(ArchiveFormatHandler):
             raise ArchiveFormatError('Not a zip file.')
 
         with zipfile.ZipFile(path, "r") as archive:
-            for m in archive.infolist():
-                if not m.is_dir():
-                    with archive.open(m, 'r') as file:
-                        h = self._compute_file_hash(file)
-                    yield HashRecord(h, m.filename)
+            for info in archive.infolist():
+                if not info.is_dir():
+                    with archive.open(info, 'r') as file:
+                        hash_val = self._compute_file_hash(file)
+                    yield HashRecord(hash_val, info.filename)
                 else:
-                    yield HashRecord(None, m.filename)
+                    yield HashRecord(None, info.filename)
 
 
 class TarArchiveHandler(ArchiveFormatHandler):
+    """
+    Handler for tar-based archives, including various compressed variants thereof.
+    """
 
     def check_file(self, path: pl.Path) -> bool:
         return path.is_file() and tarfile.is_tarfile(path)
@@ -96,16 +130,19 @@ class TarArchiveHandler(ArchiveFormatHandler):
             raise ArchiveFormatError('Not a tar file.')
 
         with tarfile.open(path, mode='r', ) as archive:
-            for m in archive.getmembers():
-                if m.isfile():
-                    with archive.extractfile(m) as file:
-                        h = self._compute_file_hash(file)
-                    yield HashRecord(h, m.name)
+            for member in archive.getmembers():
+                if member.isfile():
+                    with archive.extractfile(member) as file:
+                        hash_val = self._compute_file_hash(file)
+                    yield HashRecord(hash_val, member.name)
                 else:
-                    yield HashRecord(None, m.name)
+                    yield HashRecord(None, member.name)
 
 
 class DirArchiveHandler(ArchiveFormatHandler):
+    """
+    Handler for simple directory-based archives.
+    """
 
     def check_file(self, path: pl.Path) -> bool:
         return path.is_dir()
@@ -114,8 +151,8 @@ class DirArchiveHandler(ArchiveFormatHandler):
         if not self.check_file(path):
             raise ArchiveFormatError('File is not a directory.')
 
-        # The parent dir is always defined. If we are in the actual file system root, e.g. '/', 'D:\'..., calling parent
-        # returns the file system root again.
+        # The parent dir is always defined. If we are in the actual file system root, e.g. '/',
+        # 'D:\'..., calling parent returns the file system root again.
         archive_root = path.parent
 
         yield HashRecord(None, os.path.relpath(path, archive_root))
@@ -127,8 +164,8 @@ class DirArchiveHandler(ArchiveFormatHandler):
             for file_name in files:
                 file_path = os.path.join(root, file_name)
                 with open(file_path, 'rb') as reader:
-                    h = self._compute_file_hash(reader)
-                yield HashRecord(h, os.path.relpath(file_path, archive_root))
+                    hash_val = self._compute_file_hash(reader)
+                yield HashRecord(hash_val, os.path.relpath(file_path, archive_root))
 
 
 try:
@@ -136,6 +173,10 @@ try:
 
 
     class SevenZipArchiveHandler(ArchiveFormatHandler):
+        """
+        Handler for 7zip-based archives. This handler performs a full in-memory extraction of the
+        archive which makes it unsuitable for large archives.
+        """
 
         def check_file(self, path: pl.Path) -> bool:
             return path.is_file() and py7zr.is_7zfile(path)
@@ -147,21 +188,24 @@ try:
             with py7zr.SevenZipFile(path, "r") as archive:
                 file_contents = archive.readall()
 
-                for fi in archive.list():
-                    if fi.is_directory:
-                        yield HashRecord(None, fi.filename)
+                for info in archive.list():
+                    if info.is_directory:
+                        yield HashRecord(None, info.filename)
                     else:
-                        h = self._compute_file_hash(file_contents[fi.filename])
-                        yield HashRecord(h, fi.filename)
+                        hash_val = self._compute_file_hash(file_contents[info.filename])
+                        yield HashRecord(hash_val, info.filename)
 
 except ImportError:
     py7zr = None
 
 
 class DispatchingArchiveHandler(ArchiveFormatHandler):
+    """
+    Handler that dispatches to the first supported handler in a collection of other handlers.
+    """
 
     def __init__(self, hasher: FileHasher):
-        super(DispatchingArchiveHandler, self).__init__(hasher)
+        super().__init__(hasher)
         self._format_handlers = [
             ZipArchiveHandler(hasher),
             TarArchiveHandler(hasher),
@@ -173,6 +217,14 @@ class DispatchingArchiveHandler(ArchiveFormatHandler):
             )
 
     def _get_handler_for_file(self, path: pl.Path) -> ArchiveFormatHandler:
+        """
+        Checks the added handlers one-by-one in order for compatibility with the given archive. The
+        first matching handler is returned.
+
+        :param path: Input archive path.
+        :return: First matching handler.
+        :throws ArchiveFormatError: If no suitable handler is found.
+        """
         for handler in self._format_handlers:
             if handler.check_file(path):
                 return handler

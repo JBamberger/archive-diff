@@ -1,3 +1,7 @@
+"""
+Command-line interface to the archive-diff module.
+"""
+
 import argparse
 import hashlib
 import pathlib as pl
@@ -7,6 +11,9 @@ from archive_diff.cli_output import print_diff
 
 
 def main():
+    """
+    Main method that handles the command line interface of archive-diff
+    """
     parser = argparse.ArgumentParser("Archive-diff", description='''Diff tool for archive files.''')
     parser.add_argument('file1',
                         type=pl.Path,
@@ -18,8 +25,8 @@ def main():
                         help='Second archive file.')
     parser.add_argument('--keep-prefix',
                         action='store_true',
-                        help='Keeps the path prefixes (root directories of the archives) for comparison. By default the'
-                             ' prefix is ignored.')
+                        help='Keeps the path prefixes (root directories of the archives) for'
+                             ' comparison. By default the prefix is ignored.')
     parser.add_argument('--hash-algorithm',
                         required=False,
                         choices=hashlib.algorithms_available,
@@ -39,11 +46,12 @@ def main():
     differ = ArchiveDiffer(keep_prefix=args.keep_prefix, hash_algorithm=args.hash_algorithm)
     try:
         archive_diff = differ.compute_diff(args.file1, args.file2)
-    except FileNotFoundError as e:
-        print(f'File not found: {e.filename}')
+    except FileNotFoundError as error:
+        print(f'File not found: {error.filename}')
         return
 
-    print_diff(archive_diff, suppress_common_lines=args.suppress_common, quiet=args.quiet, tree=args.tree)
+    print_diff(archive_diff, suppress_common_lines=args.suppress_common, quiet=args.quiet,
+               tree=args.tree)
 
 
 if __name__ == '__main__':
