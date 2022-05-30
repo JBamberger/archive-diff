@@ -1,9 +1,14 @@
 from unittest import TestCase
 
-from archive_diff.archive_diff import DirArchiveHandler, FileHasher, HashRecord, ZipArchiveHandler, TarArchiveHandler, \
-    SevenZipArchiveHandler, path_parts, compute_listing_diff, DiffRecord, DiffState, find_common_prefix, \
+from archive_diff.archive_diff import compute_listing_diff, find_common_prefix, \
     strip_prefix_from_records
+from archive_diff.file_comparison import FileHasher
+from archive_diff.diff_data import DiffState, DiffRecord
+from archive_diff.archive_format_handler import ZipArchiveHandler, TarArchiveHandler, DirArchiveHandler, \
+    SevenZipArchiveHandler, HashRecord
 import pathlib as pl
+
+from archive_diff.utils import path_parts
 
 
 class TestArchiveHandler(TestCase):

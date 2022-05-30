@@ -2,7 +2,8 @@ import argparse
 import hashlib
 import pathlib as pl
 
-from archive_diff.archive_diff import ArchiveDiffer, print_diff
+from archive_diff.archive_diff import ArchiveDiffer
+from archive_diff.cli_output import print_diff
 
 
 def main():
