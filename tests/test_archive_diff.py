@@ -1,24 +1,35 @@
+"""
+Test cases.
+"""
+import pathlib as pl
 from unittest import TestCase
 
 from archive_diff.archive_diff import compute_listing_diff, find_common_prefix, \
     strip_prefix_from_records
-from archive_diff.file_comparison import FileHasher
+from archive_diff.archive_format_handler import ZipArchiveHandler, TarArchiveHandler, \
+    DirArchiveHandler, SevenZipArchiveHandler, HashRecord
 from archive_diff.diff_data import DiffState, DiffRecord
-from archive_diff.archive_format_handler import ZipArchiveHandler, TarArchiveHandler, DirArchiveHandler, \
-    SevenZipArchiveHandler, HashRecord
-import pathlib as pl
-
+from archive_diff.file_comparison import FileHasher
 from archive_diff.utils import path_parts
 
 
 class TestArchiveHandler(TestCase):
+    """
+    Tests the various archive format handlers.
+    """
     test_file_root = pl.Path(__file__).parent / 'test_files'
 
-    def exercise_ArchiveHandler(self, handler, path):
+    def exercise_archive_handler(self, handler, path):
+        """
+        Checks the results of the given handler and input path.
+        :param handler: Handler to test
+        :param path: Path to the test archive.
+        """
         expected_result = [
             HashRecord(None, 'simple_archive'),
             HashRecord(None, 'simple_archive/dir_in_archive'),
-            HashRecord('4de84c100c44d1192d815515bfa7d95e', 'simple_archive/dir_in_archive/file_in_dir.txt'),
+            HashRecord('4de84c100c44d1192d815515bfa7d95e',
+                       'simple_archive/dir_in_archive/file_in_dir.txt'),
             HashRecord('25057e0905daa7e55d180a279565cb61', 'simple_archive/file_in_root.txt'),
         ]
         self.assertTrue(handler.check_file(path))
@@ -27,65 +38,90 @@ class TestArchiveHandler(TestCase):
         self.assertEqual(expected_result, listing)
 
     def test_dir_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `DirArchiveHandler`.
+        """
+        self.exercise_archive_handler(
             DirArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive'
         )
 
     def test_zip_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `ZipArchiveHandler`.
+        """
+        self.exercise_archive_handler(
             ZipArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.zip'
         )
 
     def test_tar_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `TarArchiveHandler` without compression.
+        """
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tar'
         )
 
     def test_tgz_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `TarArchiveHandler` with gzip compression.
+        """
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tar.gz'
         )
-        self.exercise_ArchiveHandler(
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tgz'
         )
 
     def test_tbz2_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `TarArchiveHandler` with bzip2 compression.
+        """
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tar.bz2'
         )
-        self.exercise_ArchiveHandler(
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tbz2'
         )
 
     def test_txz_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `TarArchiveHandler` with xz compression.
+        """
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.tar.xz'
         )
-        self.exercise_ArchiveHandler(
+        self.exercise_archive_handler(
             TarArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.txz'
         )
 
     def test_7z_handler(self):
-        self.exercise_ArchiveHandler(
+        """
+        Tests the `SevenZipArchiveHandler`.
+        """
+        self.exercise_archive_handler(
             SevenZipArchiveHandler(hasher=FileHasher(hash_algorithm='md5')),
             self.test_file_root / 'simple_archive.7z'
         )
 
 
 class TestDiffAlgorithm(TestCase):
-    # def test_build_diff_tree(self):
-    #     self.fail()
+    """
+    Tests the diffing algorithm.
+    """
 
     def test_compute_listing_diff_simple(self):
+        """
+        Simple diff with all diff states.
+        """
         left = [
             HashRecord('hash_left', 'root/only_left'),
             HashRecord('hash_left', 'root/different'),
@@ -106,6 +142,9 @@ class TestDiffAlgorithm(TestCase):
         self.assertEqual(expected_result, compute_listing_diff(left, right))
 
     def test_compute_listing_diff_simple_unordered(self):
+        """
+        Simple diff with all diff states, unsorted listings.
+        """
         left = [
             HashRecord('hash_same', 'root/same'),
             HashRecord('hash_left', 'root/different'),
@@ -126,6 +165,9 @@ class TestDiffAlgorithm(TestCase):
         self.assertEqual(expected_result, compute_listing_diff(left, right))
 
     def test_compute_listing_diff_multi_root(self):
+        """
+        Diff with differing archive roots.
+        """
         left = [
             HashRecord('hash_left', 'only_left'),
             HashRecord('hash_left', 'different'),
@@ -146,6 +188,9 @@ class TestDiffAlgorithm(TestCase):
         self.assertEqual(expected_result, compute_listing_diff(left, right))
 
     def test_compute_listing_diff_with_dirs(self):
+        """
+        Diff containing directory records.
+        """
         left = [
             HashRecord(None, 'root'),
             HashRecord('hash_left', 'root/only_left'),
@@ -169,6 +214,9 @@ class TestDiffAlgorithm(TestCase):
         self.assertEqual(expected_result, compute_listing_diff(left, right))
 
     def test_compute_listing_diff_dir_to_file(self):
+        """
+        Diff between directory and file
+        """
         left = [HashRecord(None, 'root')]
         right = [HashRecord('hash_file', 'root')]
         expected_result = [DiffRecord('root', DiffState.DIFFERENT)]
@@ -177,8 +225,14 @@ class TestDiffAlgorithm(TestCase):
 
 
 class TestUtilityFunctions(TestCase):
+    """
+    Tests the utility functions.
+    """
 
     def test_find_common_prefix(self):
+        """
+        Simple prefix detection.
+        """
         listing = [
             HashRecord(None, 'root/hello'),
             HashRecord('hash', 'root/foo'),
@@ -189,6 +243,9 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_with_dir(self):
+        """
+        Prefix detection with prefix dir.
+        """
         listing = [
             HashRecord(None, 'root'),
             HashRecord(None, 'root/hello'),
@@ -200,6 +257,9 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_no_common(self):
+        """
+        Prefix detection without common prefix.
+        """
         listing = [
             HashRecord(None, 'hello'),
             HashRecord('hash', 'hello/world'),
@@ -211,6 +271,9 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_with_dirs(self):
+        """
+        Prefix detection with partial prefix dir.
+        """
         listing = [
             HashRecord(None, 'root'),
             HashRecord(None, 'root/hello'),
@@ -223,6 +286,10 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_only_dirs(self):
+        """
+        Prefix detection without files.
+        :return:
+        """
         listing = [
             HashRecord(None, 'root'),
             HashRecord(None, 'root/hello'),
@@ -234,6 +301,10 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_find_common_prefix_mixed(self):
+        """
+        Prefix detection with mixed files and dirs.
+        :return:
+        """
         listing = [
             HashRecord(None, 'root'),
             HashRecord(None, 'root/hello'),
@@ -246,6 +317,9 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_prefix, find_common_prefix(listing))
 
     def test_strip_prefix_from_records(self):
+        """
+        Tests prefix stripping.
+        """
         listing = [
             HashRecord(None, 'root'),
             HashRecord(None, 'root/hello'),
@@ -267,6 +341,9 @@ class TestUtilityFunctions(TestCase):
         self.assertEqual(expected_listing, result_listing)
 
     def test_path_parts(self):
+        """
+        Tests path splitting.
+        """
         # Unix-style
         self.assertEqual([], path_parts('/'))
         self.assertEqual(['hello'], path_parts('/hello'))
