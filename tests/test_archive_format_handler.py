@@ -4,8 +4,7 @@ import unittest
 from unittest import TestCase
 
 from archive_diff.archive_format_handler import HashRecord, DirArchiveHandler, ZipArchiveHandler, \
-    TarArchiveHandler
-from archive_diff.file_comparison import FileHasher
+    TarArchiveHandler, FileHasher
 
 
 class TestArchiveHandler(TestCase):

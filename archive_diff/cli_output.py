@@ -6,7 +6,7 @@ import math
 import sys
 from collections import defaultdict
 
-from archive_diff.diff_data import DiffState, ArchiveDiff, DiffTreeNode, DiffTreeDirNode, \
+from .diff_data import DiffState, ArchiveDiff, DiffTreeNode, DiffTreeDirNode, \
     DiffTreeFileNode, build_diff_tree
 
 

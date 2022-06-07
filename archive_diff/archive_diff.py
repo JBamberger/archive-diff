@@ -7,9 +7,8 @@ from __future__ import annotations
 import pathlib as pl
 from typing import List, Tuple
 
-from archive_diff.archive_format_handler import DispatchingArchiveHandler, HashRecord
-from archive_diff.diff_data import DiffState, DiffRecord, ArchiveDiff
-from archive_diff.file_comparison import FileHasher
+from .archive_format_handler import DispatchingArchiveHandler, HashRecord,  FileHasher
+from .diff_data import DiffState, DiffRecord, ArchiveDiff
 
 
 def compute_listing_diff(
