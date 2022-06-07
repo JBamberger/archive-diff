@@ -1,9 +1,5 @@
-"""
-Archive diff tool information.
-"""
-
 __title__ = "archive_diff"
-__description__ = "Simple archive comparisons."
+__description__ = "Tool to compare archive files without extracting them."
 __url__ = "https://github.com/JBamberger/archive-diff"
 __version__ = "0.1.0"
 __author__ = "Jannik Bamberger"

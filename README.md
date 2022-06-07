@@ -57,7 +57,7 @@ python -m build
 ### Running tests
 
 Some test cases require generated files. First, run the script `tests/test_files/create_archives.sh`.
-The tests can be run by calling `python3 -m unittest` in the project root directory.
+The tests can be run by calling `python -m unittest` in the project root directory.
 
 ## Usage
 

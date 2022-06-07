@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import pathlib as pl
 
-from archive_diff import ArchiveDiffer, print_diff
+from archive_diff import ArchiveDiffer, print_diff, __version__
 
 
 def main():
@@ -14,6 +14,9 @@ def main():
     Main method that handles the command line interface of archive-diff
     """
     parser = argparse.ArgumentParser("Archive-diff", description='''Diff tool for archive files.''')
+    parser.add_argument('--version',
+                        action='version',
+                        version=f'%(prog)s {__version__}')
     parser.add_argument('file1',
                         type=pl.Path,
                         metavar='FILE_1',
