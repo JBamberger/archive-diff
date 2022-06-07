@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Iterator, Optional, Union, List
 
 from archive_diff.file_comparison import FileHasher
-from archive_diff.utils import path_parts
 
 
 @dataclass
@@ -29,7 +28,7 @@ class HashRecord:
         :param relpath: Path string or list of path segments identifying this object.
         """
         self.hash = hash_value.lower() if hash_value is not None else None
-        self._path_parts = path_parts(relpath) if isinstance(relpath, str) else list(relpath)
+        self._path_parts = pl.Path(relpath).parts if isinstance(relpath, str) else list(relpath)
         self._relpath = '/'.join(self._path_parts)
 
     @property

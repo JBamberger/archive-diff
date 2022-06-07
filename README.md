@@ -54,6 +54,11 @@ python -m pip install --upgrade build
 python -m build
 ```
 
+### Running tests
+
+Some test cases require generated files. First, run the script `tests/test_files/create_archives.sh`.
+The tests can be run by calling `python3 -m unittest` in the project root directory.
+
 ## Usage
 
 Simple diff between two archive files:
